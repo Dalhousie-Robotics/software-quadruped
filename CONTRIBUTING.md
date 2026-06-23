@@ -69,11 +69,11 @@ Rules:
 1. **Open an issue first** for anything non-trivial. PRs without a linked issue will be returned.
 2. **Create a branch** from `develop` following naming conventions above.
 3. **Write tests** for any new logic (see Testing Requirements).
-4. **Self-review** your diff before requesting review — read every line.
+4. **Self-review** your diff before requesting review, read every line.
 5. **Open the PR** against `develop`, fill in the PR template completely.
 6. **Request review** from the Software Lead + at least one other team member.
 7. **Address all review comments** before merging. Resolve conversations only after the reviewer confirms.
-8. **Squash and merge** — keep `develop` history clean.
+8. **Squash and merge** to keep `develop` history clean.
 
 No one merges their own PR. No exceptions.
 
@@ -83,7 +83,7 @@ No one merges their own PR. No exceptions.
 
 **As a reviewer:**
 - Review within 48 hours of being assigned.
-- Comment on logic, correctness, and clarity — not style (CI handles style).
+- Comment on logic, correctness, and clarity, not style (CI handles style).
 - Use GitHub's suggestion feature for small fixes.
 - Approve only when you would be comfortable owning that code.
 - Be specific: "this will fail if velocity is negative because..." not "this looks wrong".

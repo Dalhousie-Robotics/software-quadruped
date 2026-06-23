@@ -8,89 +8,91 @@ This document describes the software and firmware architecture of the Dal Roboti
 
 The system is divided into two compute domains:
 
-| Domain | Hardware | Language | Responsibility |
-|---|---|---|---|
-| On-robot (embedded) | ESP32 | C++ | Real-time motor control, sensor reading |
-| Off-robot (PC) | Windows PC | Python | Gait planning, simulation, high-level commands |
+| Domain | Hardware | Language | Toolchain | Responsibility |
+|---|---|---|---|---|
+| On-robot (embedded) | STM32F446RE | C | STM32CubeIDE / HAL | Real-time motor control, CAN bus |
+| Off-robot (PC) | Windows PC | Python | VS Code | Gait planning, simulation, high-level commands |
 
-These two domains communicate over **USB Serial** during development and **WiFi UDP** when deployed.
+These two domains communicate over **USART2 via ST-Link virtual COM** during development. Wireless (WiFi via UART-attached module) is planned for Phase 5+.
 
 ---
 
 ## Layer Diagram
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  LAYER 5: Autonomy & AI (ML Team)                    │
-│  Person detection, campus navigation, conversation   │
-│  Interface: see docs/ml_interface_agreement.md       │
-├──────────────────────────────────────────────────────┤
-│  LAYER 4: High-Level Control (PC / Python)           │
-│  Gait scheduler, foot trajectory planner,            │
-│  body pose controller, command dispatcher            │
-├──────────────────────────────────────────────────────┤
-│  LAYER 3: Kinematics (PC / Python)                   │
-│  Forward kinematics (FK), Inverse kinematics (IK)    │
-│  for all 4 legs                                      │
-├──────────────────────────────────────────────────────┤
-│  LAYER 2: Serial / WiFi Protocol                     │
-│  JSON or binary packet: joint targets → ESP32        │
-│  Joint states, IMU data ← ESP32                      │
-├──────────────────────────────────────────────────────┤
-│  LAYER 1: ESP32 Firmware (C++)                       │
-│  Receives joint targets, runs PD control loop,       │
-│  sends CAN frames, reads IMU, watchdog               │
-├──────────────────────────────────────────────────────┤
-│  LAYER 0: CAN Bus + Motors                           │
-│  AK40-10 × 12, MIT Mini Cheetah CAN protocol        │
-└──────────────────────────────────────────────────────┘
++------------------------------------------------------+
+|  LAYER 5: Autonomy & AI (ML Team)                    |
+|  Person detection, campus navigation, conversation   |
+|  Interface: see docs/ml_interface_agreement.md       |
++------------------------------------------------------+
+|  LAYER 4: High-Level Control (PC / Python)           |
+|  Gait scheduler, foot trajectory planner,            |
+|  body pose controller, command dispatcher            |
++------------------------------------------------------+
+|  LAYER 3: Kinematics (PC / Python)                   |
+|  Forward kinematics (FK), Inverse kinematics (IK)    |
+|  for all 4 legs                                      |
++------------------------------------------------------+
+|  LAYER 2: Serial Protocol (USART2 / WiFi UDP)        |
+|  ASCII command packets: joint targets -> STM32       |
+|  Joint states <- STM32                               |
++------------------------------------------------------+
+|  LAYER 1: STM32F446RE Firmware (C / CubeIDE / HAL)  |
+|  Receives joint targets, encodes MIT CAN frames,     |
+|  reads back motor state, safety watchdog             |
++------------------------------------------------------+
+|  LAYER 0: CAN Bus + Motors                           |
+|  AK40-10 x 12, MIT Mini Cheetah CAN protocol        |
++------------------------------------------------------+
 ```
 
 ---
 
-## Communication Protocol (PC ↔ ESP32)
+## STM32 Pin Assignments (Nucleo F446RE)
 
-### Command packet (PC → ESP32)
-Sent at the gait control loop rate (~100 Hz from PC side).
+| Pin | Peripheral | Function |
+|---|---|---|
+| PA2 | USART2 TX | Serial to PC (via ST-Link virtual COM) |
+| PA3 | USART2 RX | Serial from PC |
+| PA11 | CAN1 RX | From CAN transceiver CRXD |
+| PA12 | CAN1 TX | To CAN transceiver CTXD |
 
-```json
-{
-  "seq": 1042,
-  "joints": {
-    "FL": { "hip_ab": 0.0, "hip_fe": -0.5, "knee": 1.2 },
-    "FR": { "hip_ab": 0.0, "hip_fe": -0.5, "knee": 1.2 },
-    "RL": { "hip_ab": 0.0, "hip_fe": -0.5, "knee": 1.2 },
-    "RR": { "hip_ab": 0.0, "hip_fe": -0.5, "knee": 1.2 }
-  },
-  "kp": 5.0,
-  "kd": 0.5
-}
+**CAN bus speed:** 1 Mbit/s
+**USART2 baud rate:** 115200
+
+**CAN timing for 1 Mbit/s at 90 MHz APB1:**
+Prescaler=9, TimeSeg1=6, TimeSeg2=3, SJW=1
+
+---
+
+## Communication Protocol (PC to STM32)
+
+ASCII commands over USART2, newline-terminated.
+
+### Commands (PC -> STM32)
+
+```
+enable <id>
+disable <id>
+zero <id>
+pos <id> <rad>
+stop
+status
 ```
 
-All angles are in **radians**. `FL/FR/RL/RR` = Front-Left, Front-Right, Rear-Left, Rear-Right.
+### Response (STM32 -> PC)
 
-### State packet (ESP32 → PC)
-Sent at the CAN feedback rate (~500 Hz, decimated to ~100 Hz over serial).
-
-```json
-{
-  "seq": 1042,
-  "joints": {
-    "FL": { "hip_ab": { "pos": 0.0, "vel": 0.0, "torque": 0.1 }, ... },
-    ...
-  },
-  "imu": { "roll": 0.0, "pitch": 0.0, "yaw": 0.0, "ax": 0.0, "ay": 0.0, "az": -9.81 },
-  "timestamp_ms": 54321
-}
 ```
-
-> Note: the exact wire format (JSON vs binary) is TBD and will be decided in ADR-003. JSON is used during development for debuggability; binary (e.g., MessagePack or custom struct) may be adopted for deployed performance.
+STATE <id> <pos_rad> <vel_rad_s> <torque_Nm>
+[ok] ...
+[error] ...
+```
 
 ---
 
 ## CAN Bus Architecture
 
-Each AK40-10 motor has a unique CAN ID (1–12). The ESP32 uses its built-in **TWAI** peripheral (CAN 2.0B compatible).
+Each AK40-10 motor has a unique CAN ID (1-12). The STM32F446RE uses its built-in **bxCAN** peripheral (CAN 2.0B). An external CAN transceiver (SN65HVD230 or TJA1050) is required between the STM32 and the CAN bus wires. The Electrical team provides this circuit.
 
 Motor ID assignment:
 
@@ -109,37 +111,41 @@ Motor ID assignment:
 | 11 | Hip Flexion/Extension | Rear Right |
 | 12 | Knee | Rear Right |
 
-CAN bus speed: **1 Mbit/s** (AK40-10 default).
-
 ---
 
 ## MIT Mini Cheetah CAN Protocol
 
 The AK40-10 uses the MIT Mini Cheetah actuator protocol. Each CAN frame is 8 bytes.
 
-### Command frame (host → motor)
+### Command frame (STM32 -> motor)
+
 ```
-Byte [0:1]  position target    (uint16, range maps to -12.5 to +12.5 rad)
-Byte [2:3]  velocity target    (uint16, range maps to -65.0 to +65.0 rad/s)
-Byte [4]    kp                 (uint8,  range maps to 0 to 500 Nm/rad)
-Byte [5]    kd                 (uint8,  range maps to 0 to 5 Nm·s/rad)
-Byte [6:7]  feedforward torque (uint16, range maps to -18.0 to +18.0 Nm)
+Byte [0:1]  position target     (uint16, maps to -12.5 to +12.5 rad)
+Byte [2]    velocity [11:4]
+Byte [3]    vel [3:0] | kp[11:8]
+Byte [4]    kp [7:0]             (12-bit, maps to 0 to 500 Nm/rad)
+Byte [5]    kd [11:4]
+Byte [6]    kd [3:0] | t[11:8]   (kd maps to 0 to 5 Nm-s/rad)
+Byte [7]    torque_ff [7:0]      (12-bit, maps to -18 to +18 Nm)
 ```
 
-### Response frame (motor → host)
+### Response frame (motor -> STM32)
+
 ```
 Byte [0]    Motor ID
-Byte [1:2]  position           (uint16, same mapping)
-Byte [3:4]  velocity           (uint16, same mapping)
-Byte [5:6]  torque             (uint16, same mapping)
-Byte [7]    temperature + error flags
+Byte [1:2]  position
+Byte [3:4]  velocity (12-bit packed)
+Byte [4:5]  torque   (12-bit packed)
+Byte [6:7]  temperature and error flags
 ```
 
-Enter MIT mode by sending the special frame: `{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC }` to the motor's CAN ID.
+### Special frames (to motor CAN ID)
 
-Exit MIT mode: `{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFD }`.
-
-Zero position: `{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE }`.
+| Frame | Last byte | Purpose |
+|---|---|---|
+| `FF FF FF FF FF FF FF FC` | 0xFC | Enter MIT mode |
+| `FF FF FF FF FF FF FF FD` | 0xFD | Exit MIT mode |
+| `FF FF FF FF FF FF FF FE` | 0xFE | Set zero position |
 
 ---
 
@@ -149,21 +155,17 @@ The simulation mirrors the real system using the same Python control code. A `Si
 
 ```
 src/control/gait_controller.py
-    └── uses: MotorInterface (abstract)
-              ├── SerialMotorInterface  ← real hardware path
-              └── SimMotorInterface     ← MuJoCo path
+    uses: MotorInterface (abstract)
+          -- SerialMotorInterface  (real STM32 path via USART2)
+          -- SimMotorInterface     (MuJoCo path)
 ```
-
-The URDF/MJCF model lives in `src/simulation/models/`. All physical parameters (link lengths, masses, inertias) must match the mechanical team's CAD.
 
 ---
 
 ## Key Design Decisions
 
-See `docs/decisions/` for Architecture Decision Records (ADRs).
-
 | ADR | Decision |
 |---|---|
-| ADR-001 | Use PlatformIO + ESP32 for motor control |
+| ADR-001 | Use STM32F446RE + STM32CubeIDE + HAL C for motor control firmware |
 | ADR-002 | Use MuJoCo for simulation |
-| ADR-003 | Wire protocol between PC and ESP32 (TBD) |
+| ADR-003 | Wire protocol between PC and STM32 (TBD) |

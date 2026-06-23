@@ -13,13 +13,13 @@ body:
     attributes:
       label: Roadmap Phase
       options:
-        - "Phase 0 — Infrastructure"
-        - "Phase 1 — Single Motor Control"
-        - "Phase 2 — Simulation Setup"
-        - "Phase 3 — Kinematics"
-        - "Phase 4 — Static Walking"
-        - "Phase 5 — Hardware Integration"
-        - "Phase 6 — Autonomy & AI"
+        - "Phase 0: Infrastructure"
+        - "Phase 1: Single Motor Control"
+        - "Phase 2: Simulation Setup"
+        - "Phase 3: Kinematics"
+        - "Phase 4: Static Walking"
+        - "Phase 5: Hardware Integration"
+        - "Phase 6: Autonomy & AI"
         - "Not on roadmap (needs discussion)"
     validations:
       required: true

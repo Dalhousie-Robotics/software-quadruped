@@ -21,7 +21,7 @@ src/firmware/.vscode/
 Thumbs.db
 desktop.ini
 
-# Secrets / credentials — never commit these
+# Secrets / credentials, never commit these
 *.env
 .env*
 secrets.*

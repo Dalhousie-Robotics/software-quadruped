@@ -1,7 +1,7 @@
 # ADR-001: Use ESP32 with PlatformIO for Motor Control Firmware
 
 **Date:** 2026-04-29
-**Status:** Accepted
+**Status:** Superseded by [ADR-001-stm32-platformio.md](ADR-001-stm32-platformio.md) (2026-05-03)
 **Deciders:** Software Team Lead
 
 ---

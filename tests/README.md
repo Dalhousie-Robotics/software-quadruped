@@ -20,5 +20,5 @@ tests/
 - One test file per source module.
 - Test file name: `test_<module_name>.py`.
 - Every public function in `src/control/` and `src/simulation/` needs at least one test.
-- Tests must be deterministic — no random seeds, no time dependencies.
+- Tests must be deterministic, no random seeds, no time dependencies.
 - Tests must not require hardware (ESP32 or motors). Hardware tests go in `scripts/` with a `_hardware_test` suffix.
